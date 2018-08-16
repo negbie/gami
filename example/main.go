@@ -49,7 +49,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if rs, err := ami.Action("Ping", nil, time.Second*5); err == nil {
+	if rs, err := ami.Action("Ping", nil, time.Second*5); err != nil {
 		log.Fatal(rs)
 	}
 

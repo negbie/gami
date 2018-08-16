@@ -31,6 +31,7 @@ type AMIClient struct {
 	bufReader        *bufio.Reader
 	connRaw          net.Conn
 	mutexAsyncAction *sync.RWMutex
+	outBuf           bytes.Buffer
 
 	address     string
 	amiUser     string
@@ -130,11 +131,10 @@ func (client *AMIClient) Reconnect() error {
 // AsyncAction return chan for wait response of action with parameter *ActionID* this can be helpful for
 // massive actions,
 func (client *AMIClient) AsyncAction(action string, params Params) (<-chan *AMIResponse, error) {
-	var outBuf bytes.Buffer
-
 	client.mutexAsyncAction.Lock()
 	defer client.mutexAsyncAction.Unlock()
 
+	client.outBuf.Reset()
 	if params == nil {
 		params = Params{}
 	}
@@ -145,12 +145,12 @@ func (client *AMIClient) AsyncAction(action string, params Params) (<-chan *AMIR
 	if _, ok := client.response[params["ActionID"]]; !ok {
 		client.response[params["ActionID"]] = make(chan *AMIResponse, 1)
 	}
-	outBuf.WriteString(fmt.Sprintf("Action: %s\n", strings.TrimSpace(action)))
+	client.outBuf.WriteString(fmt.Sprintf("Action: %s\n", strings.TrimSpace(action)))
 	for k, v := range params {
-		outBuf.WriteString(fmt.Sprintf("%s: %s\n", k, strings.TrimSpace(v)))
+		client.outBuf.WriteString(fmt.Sprintf("%s: %s\n", k, strings.TrimSpace(v)))
 	}
-	outBuf.WriteString("\n")
-	if _, err := client.connRaw.Write(outBuf.Bytes()); err != nil {
+	client.outBuf.WriteString("\n")
+	if _, err := client.connRaw.Write(client.outBuf.Bytes()); err != nil {
 		return nil, err
 	}
 
@@ -165,7 +165,9 @@ func (client *AMIClient) AsyncActionNoResponse(action string, params Params) err
 // Action send with params, wait for response and return the response
 func (client *AMIClient) Action(action string, params Params, actionTimeout time.Duration) (*AMIResponse, error) {
 	var ActionID string
-
+	if params == nil {
+		params = Params{}
+	}
 	if _, ok := params["ActionID"]; !ok {
 		ActionID = fmt.Sprintf("%d", time.Now().UnixNano())
 		params["ActionID"] = ActionID
@@ -288,7 +290,6 @@ func (client *AMIClient) Run() {
 			if response, err := newResponse(data); err == nil {
 				client.notifyResponse(response)
 			}
-
 		}
 	}()
 }

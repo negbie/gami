@@ -19,6 +19,5 @@ type PeerEntry struct {
 }
 
 func init() {
-	//Register ID Event for cast when detect
 	eventTrap["PeerEntry"] = PeerEntry{}
 }

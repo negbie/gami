@@ -33,7 +33,7 @@ func TestLogin(t *testing.T) {
 	}
 	go ami.Run()
 	defer ami.Close()
-	defaultInstaller(t, ami)
+	done := defaultInstaller(t, ami, 3)
 
 	//example mocking login of asterisk
 	srv.Mock("Login", func(params textproto.MIMEHeader) map[string]string {
@@ -43,6 +43,7 @@ func TestLogin(t *testing.T) {
 		}
 	})
 	ami.Login("admin", "admin")
+	<-done
 }
 
 func TestMultiAsyncActions(t *testing.T) {
@@ -54,7 +55,7 @@ func TestMultiAsyncActions(t *testing.T) {
 	}
 	go ami.Run()
 	defer ami.Close()
-	defaultInstaller(t, ami)
+	done := defaultInstaller(t, ami, 10)
 
 	tests := 10
 	workers := 5
@@ -87,24 +88,34 @@ func TestMultiAsyncActions(t *testing.T) {
 		}
 
 	}
-
+	<-done
 }
 
-func defaultInstaller(t *testing.T, ami *AMIClient) {
+func defaultInstaller(t *testing.T, ami *AMIClient, timeout int) <-chan struct{} {
+	wait := make(chan struct{})
+
 	go func() {
-		for {
-			select {
-			//handle network errors
-			case err := <-ami.NetError:
-				t.Error("Network Error:", err)
-			case err := <-ami.Error:
-				t.Error("error:", err)
-			//wait events and process
-			case <-ami.Events:
-				//t.Log("Event:", *ev)
-			}
+		select {
+		//handle network errors
+		case err := <-ami.NetError:
+			t.Error("Network Error:", err)
+		case err := <-ami.Error:
+			t.Error("error:", err)
+		case <-time.After(time.Second * time.Duration(timeout)):
 		}
+		wait <- struct{}{}
+
+		go func() {
+			for {
+				select {
+				//wait events and process
+				case <-ami.Events:
+					//t.Log("Event:", *ev)
+				}
+			}
+		}()
 	}()
+	return wait
 }
 
 func newAmiServer() *amiServer {
@@ -143,7 +154,7 @@ func (c *amiServer) do(listener net.Listener) {
 
 		go func(conn *textproto.Conn) {
 			defer conn.Close()
-
+			mutex := &sync.Mutex{}
 			for {
 				header, err := conn.ReadMIMEHeader()
 				if err != nil {
@@ -160,7 +171,9 @@ func (c *amiServer) do(listener net.Listener) {
 						}
 						output.WriteString("\r\n")
 
+						mutex.Lock()
 						err := conn.PrintfLine(output.String())
+						mutex.Unlock()
 						if err != nil {
 							panic(err)
 						}
@@ -168,7 +181,9 @@ func (c *amiServer) do(listener net.Listener) {
 						//default response
 						fmt.Fprintf(&output, "Response: TEST\r\nActionID: %s\r\n\r\n",
 							header.Get("Actionid"))
+						mutex.Lock()
 						err := conn.PrintfLine(output.String())
+						mutex.Unlock()
 						if err != nil {
 							panic(err)
 						}
